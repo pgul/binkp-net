@@ -1,0 +1,43 @@
+#! /usr/bin/perl
+
+use DB_File;
+
+$db = shift;
+unless (tie(%nodelist, 'DB_File', "$db.$$", O_RDWD|O_CREAT, 0644)) {
+	die "Cannot create database: $!\n";
+}
+while (<>) {
+	chomp();
+	if (/^;A FidoNet Nodelist for \S+, \S+ \d+, \d+ -- Day number (\d+)/) {
+		$nodelist{"daynum"} = $1;
+	}
+	next if /^;/;
+	next if /^\x1a?\s*$/;
+	unless (/^([^,]*),([^,]+),([^,]+),([^,]+),([^,]+),([^,]+),([^,]+)(?:,(.*))?$/)
+	{	error("Can't parse line $line:\n$_");
+		next;
+	}
+	($keyword,$node) = ($1,$2);
+	unless ($keyword =~ /^(Zone|Region|Host|Hub|Hold|Down|Pvt|)$/)
+	{	error("unknown keyword $keyword in line $line:\n$_");
+		next;
+	}
+	if ($keyword eq "Zone") {
+		$zone = $net = $node;
+		$node = 0;
+	} elsif ($keyword eq "Region" || $keyword eq "Host") {
+		$net = $node;
+		$node = 0;
+	}
+	$nodelist{"$zone:$net/$node"} = $_;
+}
+untie(%nodelist);
+
+rename("$db.$$", $db);
+
+exit(0);
+
+sub error {
+	print STDERR "$_[0]\n";
+}
+
