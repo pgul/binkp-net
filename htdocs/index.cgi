@@ -111,6 +111,7 @@ sub process
 		mdie("Incorrect nodenumber syntax $node");
 	}
 	($zone, $net, $fnode, $point) = ($2, $3, $4, $6);
+	$node =~ s/\.0+//;
 	unless ($zone) {
 		$zone = 2;
 		$node = "$zone:$node";
