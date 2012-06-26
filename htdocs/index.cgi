@@ -1,7 +1,8 @@
 #! /usr/bin/perl
 
 # + Register new user, confirmation by netmail
-# ? Redirect to https
+# + Redirect to https (by apache)
+# + dynip
 # - Anonymous: add node missing in the nodelist and response on binkd, expire on 3 weeks if not in the nodelist
 # - If host: can edit any nodes in his network (incl. missing in nodelist)
 # - If RC: can edit only independent nodes under region (incl. missing in nodelist)
@@ -38,7 +39,7 @@ $proto = ($ENV{"SCRIPT_FILENAME"} =~ /https/ ? "https" : "http");
 $myfullname = "$proto://binkp.net/";
 $config = "/var/www/binkp.net/binkp-net.conf";
 $debug  = 1;
-$VERSION = "0.1";
+$VERSION = "0.2";
 $title = "BINKP.NET DNS EDITOR $VERSION";
 
 readcfg();
@@ -66,7 +67,7 @@ sub readcfg
 		http_head();
 		mdie("MySQL config parameters not defined");
 	}
-	foreach $i qw(cookie_seed tpl_dir nodelist_db sendmail email_from update_flag myaka) {
+	foreach $i (qw(cookie_seed tpl_dir nodelist_db sendmail email_from update_flag myaka)) {
 		if (!defined($conf{$i})) {
 			http_head();
 			mdie("$i config parameter not defined");
@@ -110,7 +111,10 @@ sub process
 		mdie("Incorrect nodenumber syntax $node");
 	}
 	($zone, $net, $fnode, $point) = ($2, $3, $4, $6);
-	$zone = 2 unless $zone;
+	unless ($zone) {
+		$zone = 2;
+		$node = "$zone:$node";
+	}
 	if ($mode eq "c" && $node && $code) {
 		if ($code eq gen_cookie($node)) {
 			http_head();
@@ -198,7 +202,7 @@ sub update
 	# check submitted information
 	$j = 0;
 	$templ{"hostname"} = ($point ? "p$point." : "") . "f$fnode.n$net.z$zone";
-	foreach $i qw(1 2 3 4) {
+	foreach $i (qw(1 2 3 4)) {
 		next unless $q->param("host$i");
 		$host{++$j} = $q->param("host$i");
 		$port{$j} = $q->param("port$i");
@@ -207,6 +211,7 @@ sub update
 		$templ{"host$j"} = $host{$j};
 		$templ{"port$j"} = $port{$j};
 	}
+	my ($dynupdate) = 0;
 	foreach $i (sort keys %host) {
 		$rc = check_data($host{$i}, $port{$i});
 		if ($rc) {
@@ -217,6 +222,7 @@ sub update
 			return;
 		}
 		putlog("Verify data for node $node host $host{$i}:$port{$i} ok");
+		$dynupdate = 1 if $host{$i} =~ /^dyn:/;
 	}
 	# all correct - save
 	mysql_do("start transaction");
@@ -230,6 +236,7 @@ sub update
 	$templ{"result"} = "Your information successfully updated";
 	print_tpl("edit", %templ);
 	open(F, ">" . $conf{"update_flag"}) && close(F);
+	open(F, ">" . $conf{"dyn_update_flag"}) && close(F) if $dynupdate;
 }
 
 sub check_data
@@ -237,11 +244,13 @@ sub check_data
 	my($host, $port) = @_;
 	my($iaddr, $paddr, $rc, $resp, $ok, $r, $str);
 
-	unless (($iaddr = inet_aton($host))) {
-		return "Host '$host' not found";
-	}
 	unless ($port =~ /^[1-9][0-9]*$/) {
 		return "Incorrect port value '$port', should be number";
+	}
+	return "" if $host eq "dyn";
+	$host =~ s/^dyn://;
+	unless (($iaddr = inet_aton($host))) {
+		return "Host '$host' not found";
 	}
 	$paddr   = sockaddr_in($port, $iaddr);
 	unless (socket(SOCK, PF_INET, SOCK_STREAM, getprotobyname('tcp'))) {
@@ -519,6 +528,8 @@ sub template
 	$templ{"title"} = $title;
 	$templ{"node"} = $node if $node;
 	$templ{"pwc"} = $pwc if $pwc;
+	$templ{"myaka"} = $conf{"myaka"};
+	$templ{"myip"} = $conf{"myip"} if defined($conf{"myip"});
 	$tplname = $conf{"tpl_dir"} . "/$tplname.tpl" unless $tplname =~ m@^/@;
 	open($F, "<$tplname") || die("Cannot open $tplname: $!\n");
 	$cond = 1;

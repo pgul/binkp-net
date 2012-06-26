@@ -12,6 +12,9 @@ $!ifdef result
 $!endif
 <p>Edit data for node [[node]]</p>
 <p>Set IP-address(es) or hostname (CNAME) for [[hostname]].binkp.net (use empty host to delete the record):</p>
+$!ifdef myip
+<p>Use special keyword <code>dyn</code> or <code>dyn:&lt;ip-addr&gt;</code> for dynamic ip. Then, poll [[myaka]] ([[myip]]) for automatically change it.</p>
+$!endif
 <p>
 <form method=post action=[[myname]]>
 <input type="hidden" name="m" value="u">
