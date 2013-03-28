@@ -384,6 +384,7 @@ sub register
 	close(F);
 	http_head();
 	print_tpl("code_sent");
+	putlog("Registration code sent to $sysop $zone/$net.$node" . ($point ? ".$point" : ""));
 }
 
 sub pwd_crypt
