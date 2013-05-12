@@ -20,5 +20,11 @@
 <p>
 <a href="[[myname]]?m=r">Register new</a>
 </p>
+<p>
+<a href="[[myname]]?m=m">Forgot password?</a>
+</p>
+<p>
+<a href="faq.html">FAQ (rus)</a>
+</p>
 </body>
 </html>

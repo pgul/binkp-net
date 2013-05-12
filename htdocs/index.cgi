@@ -10,8 +10,8 @@
 # + Any new record should response with binkp.
 # + Records created with this interface added to binkp.net in addition to the informaion specified in the nodelist
 # + Info from fidonet.net fill to the database as its start state
-# - Change password
-# - Reset password (Forget password)
+# + Change password
+# + Reset password (Forget password)
 # - Remember me (stored cookie)
 # - Logout
 # - check if hostname has several IPs (verify binkp at all of them?)
@@ -30,16 +30,13 @@ use DBI;
 use Digest::MD5 'md5_base64';
 use DB_File;
 
-#$myname = $ENV{"SCRIPT_NAME"};
-#$myfullname = "http://".$ENV{"HTTP_HOST"}.
-#        ($ENV{"SERVER_PORT"}==80 ? "" : ":".$ENV{"SERVER_PORT"}).
-#        $ENV{"SCRIPT_NAME"};
-$myname = "/";
-$proto = ($ENV{"SCRIPT_FILENAME"} =~ /https/ ? "https" : "http");
-$myfullname = "$proto://binkp.net/";
-$config = "/var/www/binkp.net/binkp-net.conf";
-$debug  = 1;
-$VERSION = "0.2";
+$myname = $ENV{"REQUEST_URI"};
+$myname =~ s/\?.*//;
+$proto = $ENV{"REQUEST_SCHEME"};
+$myfullname = "$proto://$ENV{HTTP_HOST}$myname";
+$config = $ENV{"DOCUMENT_ROOT"} . "/../binkp-net.conf";
+$debug  = 0;
+$VERSION = "0.3";
 $title = "BINKP.NET DNS EDITOR $VERSION";
 
 readcfg();
@@ -85,8 +82,10 @@ sub process
 	$pw=$q->param("pw") if defined($q->param("pw"));
 	$pwc=$q->param("pwc") if defined($q->param("pwc"));
 	$code=$q->param("code") if defined($q->param("code"));
+	$rcode=$q->param("rcode") if defined($q->param("rcode"));
 	$mode=$q->param("m") if defined($q->param("m"));
 	$mode="c" if ($code && !$q->param("m"));
+	$mode="rc" if ($rcode && !$q->param("m"));
 	debug("node: '$node', pwc: '$pwc', mode: '$mode'");
 
 	$accept_cookie=($q->cookie("binkp_start") ? 1 : 0);
@@ -98,6 +97,11 @@ sub process
 	if ($mode eq "r") {
 		http_head();
 		print_tpl("register");
+		return;
+	}
+	if ($mode eq "m") {
+		http_head();
+		print_tpl("forget");
 		return;
 	}
 	$node=$q->cookie("node") if !$node && defined($q->cookie("node"));
@@ -126,6 +130,16 @@ sub process
 		}
 		return;
 	}
+	if ($mode eq "rc" && $node && $rcode) {
+		if ($rcode eq gen_cookie_reset($node)) {
+			http_head();
+			print_tpl("reset", "code" => $rcode);
+		} else {
+			http_head();
+			mdie("Invalid confirmation code");
+		}
+		return;
+	}
 
 	$dsn = "DBI:mysql:".$conf{"mysql_db"}.":".$conf{"mysql_host"};
 	unless ($dbh = DBI->connect($dsn, $conf{"mysql_user"}, $conf{"mysql_pwd"}, { PrintError => 0 })) {
@@ -137,18 +151,22 @@ sub process
 		register();
 		return;
 	}
+	if ($mode eq "m2") {
+		reset_pwd();
+		return;
+	}
 
 	$pwc = pwd_crypt($pw) if $pw && !$pwc;
 	$pwc=$q->cookie("pwd") if !$pwc && defined($q->cookie("pwd"));
 
-	if ($mode eq "setpass" && $node && $code) {
-		if ($code eq gen_cookie($node)) {
+	if ($mode eq "setpass" && $node && ($code || $rcode)) {
+		if ($code eq gen_cookie($node) || $rcode eq gen_cookie_reset($node)) {
 			if ($q->param("pw") && $q->param("pw") eq $q->param("pw2")) {
-				set_password($q->param("pw"));
+				set_password($q->param("pw"), $code ? 1 : 0);
 				return;
 			} else {
 				http_head();
-				print_tpl("failsetpass", "code" => $code, "error" => ($q->param("pw") ? "Passwords mismatch" : "Empty password"));
+				print_tpl("failsetpass", "code" => $code, "rcode" => $rcode, "error" => ($q->param("pw") ? "Passwords mismatch" : "Empty password"));
 				return;
 			}
 		} else {
@@ -156,7 +174,7 @@ sub process
 			mdie("Invalid confirmation code");
 		}
 	}
-	$sth=$dbh->prepare("select id, passwd from ".$conf{"mysql_utable"}." where node = " . $dbh->quote($node));
+	$sth=$dbh->prepare("select id, passwd, password(passwd) from ".$conf{"mysql_utable"}." where node = " . $dbh->quote($node));
 	unless ($sth->execute()) {
 		$err="$DBI::err ($DBI::errstr)";
 		$sth->finish();
@@ -171,11 +189,15 @@ sub process
 		mdie("Unregistered node $node");
 	}
 
-	if ($pwc ne $res[1]) {
+	if ($pwc ne $res[1] && $pwc ne $res[2] || $res[1] eq '*') {
 		http_head();
 		mdie("Incorrect pasword");
 	}
 	# OK, it's correct node and password
+	if ($pw && $pwc eq $res[1]) {
+		# Store plain password
+		mysql_do("update " . $conf{"mysql_utable"} . " set passwd = " . $dbh->quote($pw) . " where id = $res[0]");
+	}
 	$id = $res[0];
 	if (!$accept_cookie) {
 		$hostparam = "&node=" . tocgi($node) . "&pwc=" . tocgi($pwc);
@@ -190,6 +212,15 @@ sub process
 	}
 	if ($mode eq "l2") {
 		login2();
+		return;
+	}
+	if ($mode eq "p") {
+		http_head();
+		print_tpl("chpass");
+		return;
+	}
+	if ($mode eq "p2") {
+		chpass();
 		return;
 	}
 	http_head();
@@ -341,7 +372,6 @@ sub register
 	if (!$point) {
 		$sysopname = (split(/,/, $nline))[4];
 		$sysopname =~ tr/_A-Z/ a-z/;
-		$sysopname =~ tr/A-Z/a-z/;
 		$s = $sysop;
 		$s =~ tr/_A-Z/ a-z/;
 		if ($s ne $sysopname) {
@@ -384,7 +414,82 @@ sub register
 	close(F);
 	http_head();
 	print_tpl("code_sent");
-	putlog("Registration code sent to $sysop $zone/$net.$node" . ($point ? ".$point" : ""));
+	$sysop =~ tr/_/ /;
+	putlog("Registration code sent to $sysop $node");
+}
+
+sub reset_pwd
+{
+	my (%nodelist, $sysopname, $nline, $daynum, $err);
+	# Send confirmation code
+	unless (tie(%nodelist, 'DB_File', $conf{"nodelist_db"}, O_RDONLY)) {
+		http_head();
+		mdie("Internal error (cannot open nodelist database), send info to hostmaster about it.");
+	} 
+	$nline = $nodelist{"$zone:$net/$fnode"};
+	$daynum = $nodelist{"daynum"};
+	untie %nodelist;
+	if (!defined($nline)) {
+		http_head();
+		mdie("Node $node missing in the nodelist.$daynum");
+	}
+	if ($point) {
+		$sysopname = "SysOp";
+	} else {
+		$sysopname = (split(/,/, $nline))[4];
+	}
+
+	$sth=$dbh->prepare("select id, passwd, reset_freq, reset_last from ".$conf{"mysql_utable"}." where node = " . $dbh->quote($node));
+	unless ($sth->execute()) {
+		$err="$DBI::err ($DBI::errstr)";
+		$sth->finish();
+		$dbh->disconnect();
+		http_head();
+		mdie("Can't select: $err");
+	}
+	@res = $sth->fetchrow_array();
+	$sth->finish();
+	if (!@res || $res[1] eq '') {
+		http_head();
+		mdie("Node $node is not registered in this system, use register");
+	}
+	# Calculate new reset freq value
+	$curtime = time();
+	$num = $res[2] / exp(($curtime-$res[3])/$conf{"reset_period"}*log(2));
+	putlog("Actual reset freq is $num");
+	if ($num > $conf{"reset_limit"}) {
+		http_head();
+		mdie("Too many password reset requests for $node. Try later.");
+	}
+	$num++;
+	if (!$dbh->do("update " . $conf{"mysql_utable"} . " set reset_freq=$num, reset_last=$curtime where id=$res[0]")) {
+		putlog("Update reset password data error: $DBI::err ($DBI::errstr)");
+		# Ignore this error
+	}
+
+	# Ok, send netmail
+	$sysop =~ tr/ /_/;
+	unless (open(F, "| " . $conf{"sendmail"})) {
+		http_head();
+		mdie("Internal error (cannot run sendmail), send info to hostmaster about it.");
+	}
+	print F "From: " . $conf{"email_from"} . "\n";
+	print F "To: $sysopname\@" . ($point ? "p$point." : "") . "f$fnode.n$net.z$zone.fidonet.org.ua\n";
+	print F "Subject: Your binkp.net password reset code\n";
+	print F "\n";
+	print F "Hello\n";
+	print F "\n";
+	print F "You (or someone from IP " . $ENV{"REMOTE_ADDR"} . ") requested reset password for binkp.net.\n";
+	print F "For set new password please go to the following link:\n";
+	print F "$myfullname?node=" . tocgi($node) . "&rcode=" . tocgi(gen_cookie_reset($node)) . "\n";
+	print F "If you did not request password reset please ignore this message.\n";
+	print F "\n";
+	print F "--- binkp.net\n";
+	close(F);
+	http_head();
+	print_tpl("pw_reset_code_sent");
+	$sysopname =~ tr/_/ /;
+	putlog("Password reset code sent to $sysopname $node");
 }
 
 sub pwd_crypt
@@ -412,7 +517,7 @@ sub set_pwd
 	my($user, $pwd) = @_;
 	my($query, $err);
 
-	$query = sprintf("update %s set passwd = password(%s) where node = '%s'",
+	$query = sprintf("update %s set passwd = %s where node = '%s'",
 		         $conf{"mysql_utable"}, $dbh->quote($pwd), $node);
 	debug($query);
 	mysql_do($query);
@@ -432,7 +537,7 @@ sub mysql_do
 
 sub set_password
 {
-	my($pwd) = @_;
+	my($pwd, $new) = @_;
 	my($sth, @res, $err);
 
 	$sth=$dbh->prepare("select id, passwd from ".$conf{"mysql_utable"}." where node = '$node'");
@@ -448,18 +553,35 @@ sub set_password
 	if (!@res) {
 		mysql_do("insert " . $conf{"mysql_utable"} . " set node='$node', passwd=''");
 	}
-	elsif ($res[1] ne '') {
+	elsif ($res[1] ne '' && $new) {
 		http_head();
 		mdie("Node $node already registered, use login");
 	}
 
 	set_pwd($node, $pwd);
+	$pwc = pwd_crypt($pwd);
 
 	if ($accept_cookie) {
 		http_head("$myfullname?m=e", "node=" . tocgi($node), "pwd=" . tocgi($pwc));
 	} else {
+		$hostparam = "&node=" . tocgi($node) . "&pwc=" . tocgi($pwc);
 		edit();
 	}
+}
+
+sub chpass
+{
+	if (pwd_crypt($pw) ne $pwc) {
+		print_tpl("failchpass", "error" => "Incorrect password");
+		return;
+	}
+	if ($q->param("newpw") && $q->param("newpw") eq $q->param("newpw2")) {
+		set_password($q->param("newpw"), 0);
+	} else {
+		http_head();
+		print_tpl("failchpass", "pw" => $pw, "error" => ($q->param("newpw") ? "Passwords mismatch" : "Empty password"));
+	}
+	return;
 }
 
 sub gen_cookie
@@ -467,6 +589,13 @@ sub gen_cookie
 	my ($param) = @_;
 
 	return md5_base64($conf{"cookie_seed"} . ":$param:" . $conf{"cookie_seed"});
+}
+
+sub gen_cookie_reset
+{
+	my ($param) = @_;
+
+	return md5_base64($conf{"cookie_reset_seed"} . ":$param:" . $conf{"cookie_reset_seed"});
 }
 
 sub mdie
@@ -510,7 +639,6 @@ sub end_html
 {
 	print "</BODY></HTML>\n";
 }
-
 
 sub print_tpl
 {

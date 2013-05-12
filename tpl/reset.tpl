@@ -1,17 +1,16 @@
 <html>
 <head>
 <title>
-[[title]] - Set password
+[[title]] - Reset password
 </title>
 <link rel="stylesheet" href="binkp.css" type="text/css">
-<b>[[title]] - Set password</b><hr />
+<b>[[title]] - Reset password</b><hr />
 </head>
 <body>
 <p>
-Set password failed: [[error]].
+Now you can set new password for your account.
 <form method=post action="[[myname]]">
-<input type="hidden" name="code" value="[[code]]">
-<input type="hidden" name="rcode" value="[[rcode]]">
+<input type="hidden" name="rcode" value="[[code]]">
 <input type="hidden" name="node" value="[[node]]">
 <input type="hidden" name="m" value="setpass">
 <table>

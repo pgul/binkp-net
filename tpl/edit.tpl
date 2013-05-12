@@ -39,5 +39,8 @@ $!endif
 </table>
 </form>
 </p>
+<p>
+<a href="[[myname]]?m=p">Change password</a>
+</p>
 </body>
 </html>
