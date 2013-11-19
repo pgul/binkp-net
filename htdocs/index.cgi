@@ -300,7 +300,7 @@ sub check_data
 	$ok = 0;
 	$timeout = 0;
 	alarm 10;
-	$str="VER binkp.net/0.1/Linux binkp/1.0";
+	$str="VER binkp.net/$VERSION/Linux binkp/1.0";
 	syswrite(SOCK, "\x80" . chr(length($str)+1) . "\x00$str");
 	syswrite(SOCK, "\x80" . chr(length($conf{"myaka"})+1) . "\x01" . $conf{"myaka"});
 	while (sysread(SOCK, $r, 16384)>0) {
