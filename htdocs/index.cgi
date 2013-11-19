@@ -306,7 +306,7 @@ sub check_data
 	while (sysread(SOCK, $r, 16384)>0) {
 	        #debug("<< $r");
 	        $resp .= $r;
-	        if ($resp =~ m@binkp/1.[01]@i) {
+	        if ($resp =~ m@binkp/1.[01]|TIME @i) {
 	                $ok=1;
 	                last;
 	        }
