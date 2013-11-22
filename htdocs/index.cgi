@@ -206,8 +206,8 @@ sub process
 		update();
 		return;
 	}
-	if ($mode eq "e") {
-		edit();
+	if ($mode =~ /^e([01]?)$/) {
+		edit($1);
 		return;
 	}
 	if ($mode eq "l2") {
@@ -328,6 +328,7 @@ sub login2
 
 sub edit
 {
+	my($chpass_result) = $_[0];
 	my($query, %templ, $err);
 
 	$query = sprintf("select host, port from %s where id = %u", 
@@ -349,6 +350,11 @@ sub edit
 	$sth->finish();
 	http_head();
 	$templ{"hostname"} = ($point ? "p$point." : "") . "f$fnode.n$net.z$zone";
+	if ($chpass_result eq "0") {
+		$templ{"result"} = "Password successfully changed.";
+	} elsif ($chpass_result eq "1") {
+		$templ{"result"} = "Password successfully set.";
+	}
 	print_tpl("edit", %templ);
 }
 
@@ -562,10 +568,10 @@ sub set_password
 	$pwc = pwd_crypt($pwd);
 
 	if ($accept_cookie) {
-		http_head("$myfullname?m=e", "node=" . tocgi($node), "pwd=" . tocgi($pwc));
+		http_head("$myfullname?m=e$new", "node=" . tocgi($node), "pwd=" . tocgi($pwc));
 	} else {
 		$hostparam = "&node=" . tocgi($node) . "&pwc=" . tocgi($pwc);
-		edit();
+		edit($new);
 	}
 }
 
