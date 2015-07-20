@@ -23,6 +23,9 @@
 # + Points
 # - Check for infinite loops (cname to itself or a->b, b->a)
 
+use strict;
+use warnings;
+
 use CGI "-oldstyle_urls";
 use POSIX;
 use Socket;
@@ -30,41 +33,53 @@ use DBI;
 use Digest::MD5 'md5_base64';
 use DB_File;
 
-$myname = $ENV{"REQUEST_URI"};
+my $myname = $ENV{"REQUEST_URI"};
 $myname =~ s/\?.*//;
-$proto = $ENV{"REQUEST_SCHEME"};
-$myfullname = "$proto://$ENV{HTTP_HOST}$myname";
-$config = $ENV{"DOCUMENT_ROOT"} . "/../binkp-net.conf";
-$debug  = 0;
-$VERSION = "0.3";
-$title = "BINKP.NET DNS EDITOR $VERSION";
+my $proto = $ENV{"REQUEST_SCHEME"};
+my $myfullname = "$proto://$ENV{HTTP_HOST}$myname";
+my $config = $ENV{"DOCUMENT_ROOT"} . "/../binkp-net.conf";
+my $debug  = 0;
+my $VERSION = "0.3";
+my $title = "BINKP.NET DNS EDITOR $VERSION";
+my $templates = $ENV{"DOCUMENT_ROOT"} . "/../tpl";
 
 readcfg();
 process();
 exit(0);
 
+my %conf;
+my $q;
+my $dbh;
+my $id;
+my $hostparam;
+my ($zone, $net, $fnode, $point);
+my $node;
+my $accept_cookie;
+my ($pw, $pwc);
+
 sub readcfg
 {
-	unless (open(F, "<$config")) {
+	my $fh;
+	unless (open($fh, '<', $config)) {
 		http_head();
 		mdie("Can't open config $config");
 	}
-	while (<F>) {
+	while (<$fh>) {
 		chomp();
 		s/\b#.*$//;
 		next if /^\s*$/;
 		next unless /^\s*([a-z_][a-z0-9_]+)\s*=\s*(\S(.*\S)?)\s*$/i;
-		($key, $value) = ($1, $2);
+		my ($key, $value) = ($1, $2);
 		$key =~ tr/A-Z/a-z/;
 		$conf{$key} = $value;
 	}
-	close(F);
+	close($fh);
 	unless (defined($conf{"mysql_db"}) && defined($conf{"mysql_utable"}) && defined($conf{"mysql_htable"}) &&
 	        defined($conf{"mysql_user"}) && defined($conf{"mysql_pwd"})) {
 		http_head();
 		mdie("MySQL config parameters not defined");
 	}
-	foreach $i (qw(cookie_seed tpl_dir nodelist_db sendmail email_from update_flag myaka)) {
+	foreach my $i (qw(cookie_seed tpl_dir nodelist_db sendmail email_from update_flag myaka)) {
 		if (!defined($conf{$i})) {
 			http_head();
 			mdie("$i config parameter not defined");
@@ -76,19 +91,19 @@ sub readcfg
 
 sub process
 {
-	$start_time=time();
-	$mode='l';
-	$node=$q->param("node") if defined($q->param("node"));
-	$pw=$q->param("pw") if defined($q->param("pw"));
-	$pwc=$q->param("pwc") if defined($q->param("pwc"));
-	$code=$q->param("code") if defined($q->param("code"));
-	$rcode=$q->param("rcode") if defined($q->param("rcode"));
-	$mode=$q->param("m") if defined($q->param("m"));
-	$mode="c" if ($code && !$q->param("m"));
-	$mode="rc" if ($rcode && !$q->param("m"));
+	my $start_time = time();
+	my $mode = 'l';
+	$node = $q->param("node") if defined($q->param("node"));
+	$pw = $q->param("pw") if defined($q->param("pw"));
+	$pwc = $q->param("pwc") if defined($q->param("pwc"));
+	my $code = $q->param("code") if defined($q->param("code"));
+	my $rcode = $q->param("rcode") if defined($q->param("rcode"));
+	$mode = $q->param("m") if defined($q->param("m"));
+	$mode = "c" if ($code && !$q->param("m"));
+	$mode = "rc" if ($rcode && !$q->param("m"));
 	debug("node: '$node', pwc: '$pwc', mode: '$mode'");
 
-	$accept_cookie=($q->cookie("binkp_start") ? 1 : 0);
+	$accept_cookie = ($q->cookie("binkp_start") ? 1 : 0);
 	if ($mode eq "l") {
 		http_head();
 		print_tpl("login");
@@ -104,7 +119,7 @@ sub process
 		print_tpl("forget");
 		return;
 	}
-	$node=$q->cookie("node") if !$node && defined($q->cookie("node"));
+	$node = $q->cookie("node") if !$node && defined($q->cookie("node"));
 	debug("cookies read, node: '$node', pwc: '$pwc', mode: '$mode'");
 	if (!$node) {
 		http_head();
@@ -141,7 +156,7 @@ sub process
 		return;
 	}
 
-	$dsn = "DBI:mysql:".$conf{"mysql_db"}.":".$conf{"mysql_host"};
+	my $dsn = "DBI:mysql:$conf{mysql_db}:$conf{mysql_host}";
 	unless ($dbh = DBI->connect($dsn, $conf{"mysql_user"}, $conf{"mysql_pwd"}, { PrintError => 0 })) {
 		http_head();
 		mdie("Can't connect to MySQL server: $DBI::err ($DBI::errstr)");
@@ -157,7 +172,7 @@ sub process
 	}
 
 	$pwc = pwd_crypt($pw) if $pw && !$pwc;
-	$pwc=$q->cookie("pwd") if !$pwc && defined($q->cookie("pwd"));
+	$pwc = $q->cookie("pwd") if !$pwc && defined($q->cookie("pwd"));
 
 	if ($mode eq "setpass" && $node && ($code || $rcode)) {
 		if ($code eq gen_cookie($node) || $rcode eq gen_cookie_reset($node)) {
@@ -174,15 +189,15 @@ sub process
 			mdie("Invalid confirmation code");
 		}
 	}
-	$sth=$dbh->prepare("select id, passwd, password(passwd) from ".$conf{"mysql_utable"}." where node = " . $dbh->quote($node));
-	unless ($sth->execute()) {
-		$err="$DBI::err ($DBI::errstr)";
+	my $sth = $dbh->prepare("select id, passwd, password(passwd) from $conf{mysql_utable} where node = ?");
+	unless ($sth->execute($node)) {
+		my $err = $dbh->errstr;
 		$sth->finish();
 		$dbh->disconnect();
 		http_head();
 		mdie("Can't select: $err");
 	}
-	@res = $sth->fetchrow_array();
+	my @res = $sth->fetchrow_array();
 	$sth->finish();
 	if (!@res || $res[1] eq '') {
 		http_head();
@@ -196,7 +211,7 @@ sub process
 	# OK, it's correct node and password
 	if ($pw && $pwc eq $res[1]) {
 		# Store plain password
-		mysql_do("update " . $conf{"mysql_utable"} . " set passwd = " . $dbh->quote($pw) . " where id = $res[0]");
+		mysql_do("update $conf{mysql_utable} set passwd = ? where id = $res[0]", $pw);
 	}
 	$id = $res[0];
 	if (!$accept_cookie) {
@@ -229,12 +244,12 @@ sub process
 
 sub update
 {
-	my(%host, %port, $i, $j, $rc, %templ);
+	my(%host, %port, $rc, %templ);
 
 	# check submitted information
-	$j = 0;
+	my $j = 0;
 	$templ{"hostname"} = ($point ? "p$point." : "") . "f$fnode.n$net.z$zone";
-	foreach $i (qw(1 2 3 4)) {
+	foreach my $i (qw(1 2 3 4)) {
 		next unless $q->param("host$i");
 		$host{++$j} = $q->param("host$i");
 		$port{$j} = $q->param("port$i");
@@ -243,8 +258,8 @@ sub update
 		$templ{"host$j"} = $host{$j};
 		$templ{"port$j"} = $port{$j};
 	}
-	my ($dynupdate) = 0;
-	foreach $i (sort keys %host) {
+	my $dynupdate = 0;
+	foreach my $i (sort keys %host) {
 		$rc = check_data($host{$i}, $port{$i});
 		if ($rc) {
 			putlog("Verify data for node $node host $host{$i}:$port{$i} failed: $rc");
@@ -259,60 +274,67 @@ sub update
 	# all correct - save
 	mysql_do("start transaction");
 	mysql_do("delete from " . $conf{"mysql_htable"} . " where id = $id");
-	foreach $i (sort keys %host) {
-		mysql_do("insert ignore " . $conf{"mysql_htable"} . " set id=$id, host=" . $dbh->quote($host{$i}) . ", port=" . $port{$i});
+	foreach my $i (sort keys %host) {
+		mysql_do("insert ignore $conf{mysql_htable} set id=$id, host=?, port=?", $host{$i}, $port{$i});
 	}
 	mysql_do("commit");
 	putlog("Update info for node $node success");
 	http_head();
 	$templ{"result"} = "Your information successfully updated";
 	print_tpl("edit", %templ);
-	open(F, ">" . $conf{"update_flag"}) && close(F);
-	open(F, ">" . $conf{"dyn_update_flag"}) && close(F) if $dynupdate;
+	touch($conf{"update_flag"});
+	touch($conf{"dyn_update_flag"}) if $dynupdate;
+}
+
+sub touch
+{
+	my ($fname) = @_;
+	if (open(my $fh, '>', $fname)) {
+		close($fh);
+	} else {
+		putlog("Can't touch '$fname': $!");
+	}
 }
 
 sub check_data
 {
 	my($host, $port) = @_;
-	my($iaddr, $paddr, $rc, $resp, $ok, $r, $str);
 
 	unless ($port =~ /^[1-9][0-9]*$/) {
 		return "Incorrect port value '$port', should be number";
 	}
 	return "" if $host eq "dyn";
 	$host =~ s/^dyn://;
-	unless (($iaddr = inet_aton($host))) {
+	my $iaddr = inet_aton($host) ||
 		return "Host '$host' not found";
-	}
-	$paddr   = sockaddr_in($port, $iaddr);
-	unless (socket(SOCK, PF_INET, SOCK_STREAM, getprotobyname('tcp'))) {
+	my $paddr = sockaddr_in($port, $iaddr);
+	socket(my $sock, PF_INET, SOCK_STREAM, getprotobyname('tcp')) ||
 		return "Internal error, cannot create socket ($!), send info to hostmaster about it.";
-	}
-	$timeout = 0;
-	$SIG{ALRM} = sub { close(SOCK); $timeout = 1; };
+	my $timeout = 0;
+	$SIG{ALRM} = sub { close($sock); $timeout = 1; };
 	alarm 10;
-	unless (connect(SOCK, $paddr)) {
-		$rc="Error connect to $host:$port: ". ($timeout ? "timeout" : $!);
-		close(SOCK) unless $timeout;
-		return $rc;
+	unless (connect($sock, $paddr)) {
+		alarm 0;
+		close($sock) unless $timeout;
+		return "Error connect to $host:$port: ". ($timeout ? "timeout" : $!);
 	}
-	$resp = '';
-	$ok = 0;
+	my $resp = '';
+	my $ok = 0;
 	$timeout = 0;
 	alarm 10;
-	$str="VER binkp.net/$VERSION/Linux binkp/1.0";
-	syswrite(SOCK, "\x80" . chr(length($str)+1) . "\x00$str");
-	syswrite(SOCK, "\x80" . chr(length($conf{"myaka"})+1) . "\x01" . $conf{"myaka"});
-	while (sysread(SOCK, $r, 16384)>0) {
+	my $str = "VER binkp.net/$VERSION/Linux binkp/1.0";
+	syswrite($sock, "\x80" . chr(length($str) + 1) . "\x00" . $str);
+	syswrite($sock, "\x80" . chr(length($conf{"myaka"}) + 1) . "\x01" . $conf{"myaka"});
+	while (sysread($sock, my $r, 16384)>0) {
 	        #debug("<< $r");
 	        $resp .= $r;
 	        if ($resp =~ m@binkp/1.[01]|TIME @i) {
-	                $ok=1;
+	                $ok = 1;
 	                last;
 	        }
 	}
 	alarm 0;
-	close(SOCK) unless $timeout;
+	close($sock) unless $timeout;
 	return "" if $ok;
 	return "Error connect to $host:$port: " . ($timeout ? "chat timeout" : ($! ? "$!" : "Connection closed"));
 }
@@ -329,25 +351,25 @@ sub login2
 sub edit
 {
 	my($chpass_result) = $_[0];
-	my($query, %templ, $err);
+	my(%templ);
 
-	$query = sprintf("select host, port from %s where id = %u", 
+	my $query = sprintf("select host, port from %s where id = %u", 
 	                 $conf{"mysql_htable"}, $id);
-	$sth=$dbh->prepare($query);
+	my $sth = $dbh->prepare($query);
 	unless ($sth->execute()) {
-		$err="$DBI::err ($DBI::errstr)";
+		my $err = $dbh->errstr;
 		$sth->finish();
 		$dbh->disconnect();
 		http_head();
 		mdie("Can't select: $err");
 	}
-	$i = 0;
-	while (($host, $port) = $sth->fetchrow_array()) {
+	my $i = 0;
+	while (my ($host, $port) = $sth->fetchrow_array()) {
 		$i++;
 		$templ{"host$i"} = $host;
 		$templ{"port$i"} = $port;
 	}
-	$sth->finish();
+	#$sth->finish();
 	http_head();
 	$templ{"hostname"} = ($point ? "p$point." : "") . "f$fnode.n$net.z$zone";
 	if ($chpass_result eq "0") {
@@ -360,25 +382,24 @@ sub edit
 
 sub register
 {
-	my (%nodelist, $sysop, $sysopname, $s, $daynum, $nline, $err);
-
 	# Check entered information, send confirmation code
-	$sysop = $q->param("sysop");
+	my $sysop = $q->param("sysop");
+	my %nodelist;
 	unless (tie(%nodelist, 'DB_File', $conf{"nodelist_db"}, O_RDONLY)) {
 		http_head();
 		mdie("Internal error (cannot open nodelist database), send info to hostmaster about it.");
 	} 
-	$nline = $nodelist{"$zone:$net/$fnode"};
-	$daynum = $nodelist{"daynum"};
+	my $nline = $nodelist{"$zone:$net/$fnode"};
+	my $daynum = $nodelist{"daynum"};
 	untie %nodelist;
 	if (!defined($nline)) {
 		http_head();
 		mdie("Node $node missing in the nodelist.$daynum");
 	}
 	if (!$point) {
-		$sysopname = (split(/,/, $nline))[4];
+		my $sysopname = (split(/,/, $nline))[4];
 		$sysopname =~ tr/_A-Z/ a-z/;
-		$s = $sysop;
+		my $s = $sysop;
 		$s =~ tr/_A-Z/ a-z/;
 		if ($s ne $sysopname) {
 			http_head();
@@ -386,15 +407,15 @@ sub register
 		}
 	}
 
-	$sth=$dbh->prepare("select id, passwd from ".$conf{"mysql_utable"}." where node = " . $dbh->quote($node));
-	unless ($sth->execute()) {
-		$err="$DBI::err ($DBI::errstr)";
+	my $sth = $dbh->prepare("select id, passwd from $conf{mysql_utable} where node = ?");
+	unless ($sth->execute($node)) {
+		my $err = $dbh->errstr;
 		$sth->finish();
 		$dbh->disconnect();
 		http_head();
 		mdie("Can't select: $err");
 	}
-	@res = $sth->fetchrow_array();
+	my @res = $sth->fetchrow_array();
 	$sth->finish();
 	if (@res && $res[1] ne '') {
 		http_head();
@@ -402,22 +423,26 @@ sub register
 	}
 	# Ok, send netmail
 	$sysop =~ tr/ /_/;
-	unless (open(F, "| " . $conf{"sendmail"})) {
+	my $fh;
+	unless (open($fh, '|-', $conf{"sendmail"})) {
 		http_head();
 		mdie("Internal error (cannot run sendmail), send info to hostmaster about it.");
 	}
-	print F "From: " . $conf{"email_from"} . "\n";
-	print F "To: $sysop\@" . ($point ? "p$point." : "") . "f$fnode.n$net.z$zone.fidonet.org.ua\n";
-	print F "Subject: Your binkp.net confirmation code\n";
-	print F "\n";
-	print F "Hello\n";
-	print F "\n";
-	print F "You (or someone from IP " . $ENV{"REMOTE_ADDR"} . ") requested registration code for binkp.net.\n";
-	print F "For confirm your registration please go to the following link:\n";
-	print F "$myfullname?node=" . tocgi($node) . "&code=" . tocgi(gen_cookie($node)) . "\n";
-	print F "\n";
-	print F "--- binkp.net\n";
-	close(F);
+	print $fh "From: $conf{email_from}\n";
+	print $fh "To: $sysop\@" . ($point ? "p$point." : "") . "f$fnode.n$net.z$zone.fidonet.org.ua\n";
+	print $fh "Subject: Your binkp.net confirmation code\n";
+	print $fh "\n";
+	print $fh "Hello\n";
+	print $fh "\n";
+	print $fh "You (or someone from IP $ENV{REMOTE_ADDR}) requested registration code for binkp.net.\n";
+	print $fh "For confirm your registration please go to the following link:\n";
+	print $fh "$myfullname?node=" . tocgi($node) . "&code=" . tocgi(gen_cookie($node)) . "\n";
+	print $fh "\n";
+	print $fh "--- binkp.net\n";
+	unless (close($fh)) {
+		http_head();
+		mdie("Sendmail error");
+	}
 	http_head();
 	print_tpl("code_sent");
 	$sysop =~ tr/_/ /;
@@ -426,72 +451,77 @@ sub register
 
 sub reset_pwd
 {
-	my (%nodelist, $sysopname, $nline, $daynum, $err);
 	# Send confirmation code
+	my %nodelist;
 	unless (tie(%nodelist, 'DB_File', $conf{"nodelist_db"}, O_RDONLY)) {
 		http_head();
 		mdie("Internal error (cannot open nodelist database), send info to hostmaster about it.");
 	} 
-	$nline = $nodelist{"$zone:$net/$fnode"};
-	$daynum = $nodelist{"daynum"};
+	my $nline = $nodelist{"$zone:$net/$fnode"};
+	my $daynum = $nodelist{"daynum"};
 	untie %nodelist;
 	if (!defined($nline)) {
 		http_head();
 		mdie("Node $node missing in the nodelist.$daynum");
 	}
+	my $sysopname;
 	if ($point) {
 		$sysopname = "SysOp";
 	} else {
 		$sysopname = (split(/,/, $nline))[4];
 	}
 
-	$sth=$dbh->prepare("select id, passwd, reset_freq, reset_last from ".$conf{"mysql_utable"}." where node = " . $dbh->quote($node));
-	unless ($sth->execute()) {
-		$err="$DBI::err ($DBI::errstr)";
+	my $sth = $dbh->prepare("select id, passwd, reset_freq, reset_last from $conf{mysql_utable} where node = ?");
+	unless ($sth->execute($node)) {
+		my $err = $dbh->errstr;
 		$sth->finish();
 		$dbh->disconnect();
 		http_head();
 		mdie("Can't select: $err");
 	}
-	@res = $sth->fetchrow_array();
-	$sth->finish();
+	my @res = $sth->fetchrow_array();
+	#$sth->finish();
 	if (!@res || $res[1] eq '') {
 		http_head();
 		mdie("Node $node is not registered in this system, use register");
 	}
 	# Calculate new reset freq value
-	$curtime = time();
-	$num = $res[2] / exp(($curtime-$res[3])/$conf{"reset_period"}*log(2));
+	my $curtime = time();
+	my $num = $res[2] / exp(($curtime-$res[3])/$conf{"reset_period"}*log(2));
 	putlog("Actual reset freq is $num");
 	if ($num > $conf{"reset_limit"}) {
 		http_head();
 		mdie("Too many password reset requests for $node. Try later.");
 	}
 	$num++;
-	if (!$dbh->do("update " . $conf{"mysql_utable"} . " set reset_freq=$num, reset_last=$curtime where id=$res[0]")) {
+	if (!$dbh->do("update $conf{mysql_utable} set reset_freq=$num, reset_last=$curtime where id=$res[0]")) {
 		putlog("Update reset password data error: $DBI::err ($DBI::errstr)");
 		# Ignore this error
 	}
 
 	# Ok, send netmail
-	$sysop =~ tr/ /_/;
-	unless (open(F, "| " . $conf{"sendmail"})) {
+	$sysopname =~ tr/ /_/;
+	my $fh;
+	unless (open($fh, "|-", $conf{"sendmail"})) {
 		http_head();
 		mdie("Internal error (cannot run sendmail), send info to hostmaster about it.");
 	}
-	print F "From: " . $conf{"email_from"} . "\n";
-	print F "To: $sysopname\@" . ($point ? "p$point." : "") . "f$fnode.n$net.z$zone.fidonet.org.ua\n";
-	print F "Subject: Your binkp.net password reset code\n";
-	print F "\n";
-	print F "Hello\n";
-	print F "\n";
-	print F "You (or someone from IP " . $ENV{"REMOTE_ADDR"} . ") requested reset password for binkp.net.\n";
-	print F "For set new password please go to the following link:\n";
-	print F "$myfullname?node=" . tocgi($node) . "&rcode=" . tocgi(gen_cookie_reset($node)) . "\n";
-	print F "If you did not request password reset please ignore this message.\n";
-	print F "\n";
-	print F "--- binkp.net\n";
-	close(F);
+	print $fh "From: $conf{email_from}\n";
+	print $fh "To: $sysopname\@" . ($point ? "p$point." : "") . "f$fnode.n$net.z$zone.fidonet.org.ua\n";
+	print $fh "Subject: Your binkp.net password reset code\n";
+	print $fh "\n";
+	print $fh "Hello\n";
+	print $fh "\n";
+	print $fh "You (or someone from IP $ENV{REMOTE_ADDR}) requested reset password for binkp.net.\n";
+	print $fh "For set new password please go to the following link:\n";
+	print $fh "$myfullname?node=" . tocgi($node) . "&rcode=" . tocgi(gen_cookie_reset($node)) . "\n";
+	print $fh "If you did not request password reset please ignore this message.\n";
+	print $fh "\n";
+	print $fh "--- binkp.net\n";
+	unless (close($fh)) {
+		http_head();
+		mdie("Sendmail error");
+	}
 	http_head();
 	print_tpl("pw_reset_code_sent");
 	$sysopname =~ tr/_/ /;
@@ -501,42 +531,37 @@ sub reset_pwd
 sub pwd_crypt
 {
 	my($pwd) = @_;
-	my($res, $sth, $err, @row);
 
-	$sth=$dbh->prepare("select password(".$dbh->quote($pwd).")");
-	unless ($sth->execute()) {
-		$err="$DBI::err ($DBI::errstr)";
+	my $sth = $dbh->prepare("select password(?)");
+	unless ($sth->execute($pwd)) {
+		my $err = $dbh->errstr;
 		$sth->finish();
 		$dbh->disconnect();
 		http_head();
 		mdie("Can't select: $err");
 	}
-	while (@row=$sth->fetchrow_array()) {
-		$res = $row[0];
-	}
+	my @row = $sth->fetchrow_array();
 	$sth->finish();
-	return $res;
+	return $row[0];
 }
 
 sub set_pwd
 {
 	my($user, $pwd) = @_;
-	my($query, $err);
 
-	$query = sprintf("update %s set passwd = %s where node = '%s'",
-		         $conf{"mysql_utable"}, $dbh->quote($pwd), $node);
+	my $query = "update $conf{mysql_utable} set passwd = ? where node = ?";
 	debug($query);
-	mysql_do($query);
+	mysql_do($query, $pwd, $node);
 }
 
 sub mysql_do
 {
-	my($err);
-	unless ($dbh->do($_[0])) {
-		$err="$DBI::err ($DBI::errstr)";
+	my $request = shift;
+	unless ($dbh->do($request, undef, @_)) {
+		my $err = $dbh->errstr;
 		$dbh->disconnect();
 		http_head();
-		putlog("Failed mysql query: '$_[0]'");
+		putlog("Failed mysql query: '$request'");
 		mdie("Can't update database: $err");
 	}
 }
@@ -544,20 +569,19 @@ sub mysql_do
 sub set_password
 {
 	my($pwd, $new) = @_;
-	my($sth, @res, $err);
 
-	$sth=$dbh->prepare("select id, passwd from ".$conf{"mysql_utable"}." where node = '$node'");
-	unless ($sth->execute()) {
-		$err="$DBI::err ($DBI::errstr)";
+	my $sth = $dbh->prepare("select id, passwd from $conf{mysql_utable} where node = ?");
+	unless ($sth->execute($node)) {
+		my $err = $dbh->errstr;
 		$sth->finish();
 		$dbh->disconnect();
 		http_head();
 		mdie("Can't select: $err");
 	}
-	@res = $sth->fetchrow_array();
+	my @res = $sth->fetchrow_array();
 	$sth->finish();
 	if (!@res) {
-		mysql_do("insert " . $conf{"mysql_utable"} . " set node='$node', passwd=''");
+		mysql_do("insert $conf{mysql_utable} set node=?, passwd=''", $node);
 	}
 	elsif ($res[1] ne '' && $new) {
 		http_head();
@@ -594,14 +618,14 @@ sub gen_cookie
 {
 	my ($param) = @_;
 
-	return md5_base64($conf{"cookie_seed"} . ":$param:" . $conf{"cookie_seed"});
+	return md5_base64("$conf{cookie_seed}:$param:$conf{cookie_seed}");
 }
 
 sub gen_cookie_reset
 {
 	my ($param) = @_;
 
-	return md5_base64($conf{"cookie_reset_seed"} . ":$param:" . $conf{"cookie_reset_seed"});
+	return md5_base64("$conf{cookie_reset_seed}:$param:$conf{cookie_reset_seed}");
 }
 
 sub mdie
@@ -657,7 +681,7 @@ sub template
 {
 	my ($tplname, %templ) = @_;
 	my ($res, $cond, @cond, @wastrue);
-	my ($F, @F);
+	my (@fh);
 
 	$templ{"HTTP_USER_AGENT"} = $ENV{"HTTP_USER_AGENT"};
 	$templ{"myname"} = $myname;
@@ -667,19 +691,19 @@ sub template
 	$templ{"myaka"} = $conf{"myaka"};
 	$templ{"myip"} = $conf{"myip"} if defined($conf{"myip"});
 	$tplname = $conf{"tpl_dir"} . "/$tplname.tpl" unless $tplname =~ m@^/@;
-	open($F, "<$tplname") || die("Cannot open $tplname: $!\n");
+	open(my $fh, '<', $tplname) || die("Cannot open $tplname: $!\n");
 	$cond = 1;
 	while (1) {
-		if (!defined($_=<$F>)) {
-			close($F);
-			$F = pop(@F);
-			last if !defined($F);
+		if (!defined($_ = <$fh>)) {
+			close($fh);
+			$fh = pop(@fh);
+			last if !defined($fh);
 		} elsif (/^\$!include\s+(\S+)\s*$/) {
-			push(@F, $F);
-			undef($F);
+			push(@fh, $fh);
+			undef($fh);
 			$tplname = $1;
 			$tplname = "$templates/$tplname" unless $tplname =~ m@^/@;
-			open($F, "<$tplname") || die("Cannot open $tplname: $!\n");
+			open($fh, '<', $tplname) || die("Cannot open $tplname: $!\n");
 		} elsif (/^\$!set\s+([^=]+)=(.*)$/) {
 			$templ{$1} = $2;
 		} elsif (/^\$!ifdef\s+(\S+)\s*$/) {
@@ -769,15 +793,15 @@ sub cond
 
 sub tocgi
 {
-	my($s)=$_[0];
-	$s=~s/[^-A-Za-z0-9*_.$@%]/sprintf("%%%02x",ord($&))/ges;
+	my($s) = @_;
+	$s =~ s/([^-A-Za-z0-9*_.$@%])/sprintf("%%%02x",ord($1))/ges;
 	return $s;
 }
 
 sub putlog
 {
-	open(F, ">> " . $conf{"log"}) || return;
-	print F localtime() . " " . $ENV{"REMOTE_ADDR"} . " " . $ENV{"QUERY_STRING"} . " $_[0]\n";
-	close(F);
+	open(my $fh, '>>', $conf{"log"}) || return;
+	print $fh localtime() . " " . $ENV{"REMOTE_ADDR"} . " " . $ENV{"QUERY_STRING"} . " $_[0]\n";
+	close($fh);
 }
 
