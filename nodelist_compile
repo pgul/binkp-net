@@ -12,6 +12,7 @@ unless (tie(%nodelist, 'DB_File', "$db.$$", O_RDWR|O_CREAT, 0644)) {
 	die "Cannot create database: $!\n";
 }
 my $line = 0;
+my ($zone, $net);
 while (<>) {
 	chomp();
 	$line++;
@@ -20,14 +21,13 @@ while (<>) {
 	}
 	next if /^;/;
 	next if /^\x1a?\s*$/;
-	unless (/^([^,]*),([^,]+),([^,]+),([^,]+),([^,]+),([^,]+),([^,]+)(?:,(.*))?$/)
-	{	error("Can't parse line $line:\n$_");
+	unless (/^([^,]*),([^,]+),([^,]+),([^,]+),([^,]+),([^,]+),([^,]+)(?:,(.*))?$/) {
+		error("Can't parse line $line:\n$_");
 		next;
 	}
-	my ($keyword, $zone, $net, $node);
-	($keyword, $node) = ($1, $2);
-	unless ($keyword =~ /^(Zone|Region|Host|Hub|Hold|Down|Pvt|)$/)
-	{	error("unknown keyword $keyword in line $line:\n$_");
+	my ($keyword, $node) = ($1, $2);
+	unless ($keyword =~ /^(Zone|Region|Host|Hub|Hold|Down|Pvt|)$/) {
+		error("unknown keyword $keyword in line $line:\n$_");
 		next;
 	}
 	if ($keyword eq "Zone") {
@@ -36,6 +36,9 @@ while (<>) {
 	} elsif ($keyword eq "Region" || $keyword eq "Host") {
 		$net = $node;
 		$node = 0;
+	} elsif (!defined($zone)) {
+		error("No zone defined before node line in the nodelist in line $line:\n$_");
+		next;
 	}
 	$nodelist{"$zone:$net/$node"} = $_;
 }
