@@ -101,7 +101,7 @@ sub process
 	$mode = $q->param("m") if defined($q->param("m"));
 	$mode = "c" if ($code && !$q->param("m"));
 	$mode = "rc" if ($rcode && !$q->param("m"));
-	debug("node: '$node', pwc: '$pwc', mode: '$mode'");
+	#debug("node: '" . ($node // '') . "', pwc: '" . ($pwc // '') . "', mode: '" . ($mode // '') . "'");
 
 	$accept_cookie = ($q->cookie("binkp_start") ? 1 : 0);
 	if ($mode eq "l") {
