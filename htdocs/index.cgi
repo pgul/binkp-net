@@ -296,6 +296,32 @@ sub touch
 	}
 }
 
+sub validate_ip
+{
+    my ($iaddr) = @_;
+    my @bad_networks = qw(
+        0.0.0.0/8
+        127.0.0.0/8
+        10.0.0.0/8
+        172.16.0.0/12
+        192.168.0.0/16
+        100.64.0.0/10
+        169.254.0.0/16
+        224.0.0.0/4
+        255.255.255.255/32
+    );
+    my $ip = unpack("N", $iaddr);
+    foreach my $network (@bad_networks) {
+        my ($bad_addr, $network_len) = split('/', $network)
+            or next;
+        my $bad_ip = unpack("N", inet_aton($bad_addr));
+        if ($ip >> (32-$network_len) == $bad_ip >> (32-$network_len)) {
+            return "Incorrect address " . inet_ntoa($iaddr) . ": network $network reserved";
+        }
+    }
+    return "";
+}
+
 sub check_data
 {
 	my($host, $port) = @_;
@@ -307,6 +333,9 @@ sub check_data
 	$host =~ s/^dyn://;
 	my $iaddr = inet_aton($host) ||
 		return "Host '$host' not found";
+	if (my $result = validate_ip($iaddr)) {
+		return $result;
+	}
 	my $paddr = sockaddr_in($port, $iaddr);
 	socket(my $sock, PF_INET, SOCK_STREAM, getprotobyname('tcp')) ||
 		return "Internal error, cannot create socket ($!), send info to hostmaster about it.";
