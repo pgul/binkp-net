@@ -463,9 +463,10 @@ sub register
 	print $fh "\n";
 	print $fh "Hello\n";
 	print $fh "\n";
-	print $fh "You (or someone from IP $ENV{REMOTE_ADDR}) requested registration code for binkp.net.\n";
-	print $fh "For confirm your registration please go to the following link:\n";
+	print $fh "You (or someone from IP $ENV{REMOTE_ADDR}) have requested a registration code for binkp.net.\n";
+	print $fh "To confirm your registration please follow the link:\n";
 	print $fh "$myfullname?node=" . tocgi($node) . "&code=" . tocgi(gen_cookie($node)) . "\n";
+	print $fh "If you have not requested registration code, please ignore this message.\n";
 	print $fh "\n";
 	print $fh "--- binkp.net\n";
 	unless (close($fh)) {
@@ -541,10 +542,10 @@ sub reset_pwd
 	print $fh "\n";
 	print $fh "Hello\n";
 	print $fh "\n";
-	print $fh "You (or someone from IP $ENV{REMOTE_ADDR}) requested reset password for binkp.net.\n";
-	print $fh "For set new password please go to the following link:\n";
+	print $fh "You (or someone from IP $ENV{REMOTE_ADDR}) have requested a password reset for binkp.net.\n";
+	print $fh "To set a new password, please follow the link below:\n";
 	print $fh "$myfullname?node=" . tocgi($node) . "&rcode=" . tocgi(gen_cookie_reset($node)) . "\n";
-	print $fh "If you did not request password reset please ignore this message.\n";
+	print $fh "If you have not requested to reset your password, please ignore this message.\n";
 	print $fh "\n";
 	print $fh "--- binkp.net\n";
 	unless (close($fh)) {
